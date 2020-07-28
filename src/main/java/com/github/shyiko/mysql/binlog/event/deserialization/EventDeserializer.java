@@ -179,6 +179,10 @@ public class EventDeserializer {
             deserializer.setMicrosecondsPrecision(
                 compatibilitySet.contains(CompatibilityMode.DATE_AND_TIME_AS_LONG_MICRO)
             );
+
+            // DATE_AND_TIME_AS_STRING
+            deserializer.setDeserializeDateAndTimeAsString(compatibilitySet.contains(CompatibilityMode.DATE_AND_TIME_AS_STRING));
+
             if (compatibilitySet.contains(CompatibilityMode.INVALID_DATE_AND_TIME_AS_ZERO)) {
                 deserializer.setInvalidDateAndTimeRepresentation(0L);
             }
@@ -327,6 +331,11 @@ public class EventDeserializer {
          * Same as {@link CompatibilityMode#DATE_AND_TIME_AS_LONG} but values are returned in microseconds.
          */
         DATE_AND_TIME_AS_LONG_MICRO,
+
+        /**
+         * format date or time use CST time zone.
+         */
+        DATE_AND_TIME_AS_STRING,
         /**
          * Return 0 instead of null if year/month/day is 0.
          * Affects DATETIME/DATETIME_V2/DATE/TIME/TIME_V2.

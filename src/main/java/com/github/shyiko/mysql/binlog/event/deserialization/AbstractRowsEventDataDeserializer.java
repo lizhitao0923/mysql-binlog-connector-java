@@ -22,10 +22,9 @@ import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.Serializable;
 import java.math.BigDecimal;
-import java.util.BitSet;
-import java.util.Calendar;
-import java.util.Map;
-import java.util.TimeZone;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.*;
 
 /**
  * Whole class is basically a mix of <a href="https://code.google.com/p/open-replicator">open-replicator</a>'s
@@ -72,6 +71,7 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
     private final Map<Long, TableMapEventData> tableMapEventByTableId;
 
     private boolean deserializeDateAndTimeAsLong;
+    private boolean deserializeDateAndTimeAsString;
     private Long invalidDateAndTimeRepresentation;
     private boolean microsecondsPrecision;
     private boolean deserializeCharAndBinaryAsByteArray;
@@ -82,6 +82,10 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
 
     void setDeserializeDateAndTimeAsLong(boolean value) {
         this.deserializeDateAndTimeAsLong = value;
+    }
+
+    void setDeserializeDateAndTimeAsString(boolean value) {
+        this.deserializeDateAndTimeAsString = value;
     }
 
     // value to return in case of 0000-00-00 00:00:00, 0000-00-00, etc.
@@ -252,18 +256,63 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
         int month = value % 16;
         int year = value >> 4;
         Long timestamp = asUnixTime(year, month, day, 0, 0, 0, 0);
+
+        String cstDateFormat = cstDateFormat(timestamp, DATE_FORMAT);
+        timestamp = cstTimestamp(cstDateFormat, DATE_FORMAT);
         if (deserializeDateAndTimeAsLong) {
             return castTimestamp(timestamp, 0);
         }
-        return timestamp != null ? new java.sql.Date(timestamp) : null;
+
+        if (deserializeDateAndTimeAsString) {
+            return cstDateFormat;
+        }
+        return timestamp != null ? new java.sql.Time(timestamp) : null;
+    }
+
+    private static final String DATE_FORMAT = "yyyy-MM-dd";
+    private static final String DATETIME_FORMAT = "yyyy-MM-dd HH:mm:ss";
+    private static final String TIME_FORMAT = "HH:mm:ss";
+    /**
+     * GMT timestamp format as CST date string
+     * @param timestamp
+     * @return
+     */
+    private String cstDateFormat(Long timestamp, String pattern) {
+        SimpleDateFormat simpleDateFormat = new SimpleDateFormat(pattern);
+        simpleDateFormat.setTimeZone(TimeZone.getTimeZone("GMT"));
+        return simpleDateFormat.format(new Date(timestamp));
+    }
+
+    private Long cstTimestamp(String cstDateFormat, String pattern) {
+        SimpleDateFormat simpleDateFormat = new SimpleDateFormat(pattern);
+        simpleDateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));
+        try {
+            return simpleDateFormat.parse(cstDateFormat).getTime();
+        } catch (ParseException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    private String cstTimestampFormat(Long timestamp, String pattern) {
+        SimpleDateFormat simpleDateFormat = new SimpleDateFormat(pattern);
+        simpleDateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));
+        return simpleDateFormat.format(new Date(timestamp));
     }
 
     protected Serializable deserializeTime(ByteArrayInputStream inputStream) throws IOException {
         int value = inputStream.readInteger(3);
         int[] split = split(value, 100, 3);
         Long timestamp = asUnixTime(1970, 1, 1, split[2], split[1], split[0], 0);
+
+        String cstDateFormat = cstDateFormat(timestamp, TIME_FORMAT);
+        timestamp = cstTimestamp(cstDateFormat, TIME_FORMAT);
         if (deserializeDateAndTimeAsLong) {
             return castTimestamp(timestamp, 0);
+        }
+
+        if (deserializeDateAndTimeAsString) {
+            return cstDateFormat;
         }
         return timestamp != null ? new java.sql.Time(timestamp) : null;
     }
@@ -290,16 +339,34 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
             bitSlice(time, 18, 6, 24),
             fsp / 1000
         );
+
+        String cstDateFormat = cstDateFormat(timestamp, TIME_FORMAT);
+        timestamp = cstTimestamp(cstDateFormat, TIME_FORMAT);
         if (deserializeDateAndTimeAsLong) {
-            return castTimestamp(timestamp, fsp);
+            return castTimestamp(timestamp, 0);
+        }
+
+        if (deserializeDateAndTimeAsString) {
+            return cstDateFormat;
         }
         return timestamp != null ? new java.sql.Time(timestamp) : null;
     }
 
     protected Serializable deserializeTimestamp(ByteArrayInputStream inputStream) throws IOException {
         long timestamp = inputStream.readLong(4) * 1000;
+/*        if (deserializeDateAndTimeAsLong) {
+            return castTimestamp(timestamp, 0);
+        }
+        return new java.sql.Timestamp(timestamp);*/
+
+        String cstTimestampFormat = cstTimestampFormat(timestamp, DATETIME_FORMAT);
+        timestamp = cstTimestamp(cstTimestampFormat, DATETIME_FORMAT);
         if (deserializeDateAndTimeAsLong) {
             return castTimestamp(timestamp, 0);
+        }
+
+        if (deserializeDateAndTimeAsString) {
+            return cstTimestampFormat;
         }
         return new java.sql.Timestamp(timestamp);
     }
@@ -308,8 +375,19 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
         long millis = bigEndianLong(inputStream.read(4), 0, 4);
         int fsp = deserializeFractionalSeconds(meta, inputStream);
         long timestamp = millis * 1000 + fsp / 1000;
-        if (deserializeDateAndTimeAsLong) {
+/*        if (deserializeDateAndTimeAsLong) {
             return castTimestamp(timestamp, fsp);
+        }
+        return new java.sql.Timestamp(timestamp);*/
+
+        String cstTimestampFormat = cstTimestampFormat(timestamp, DATETIME_FORMAT);
+        timestamp = cstTimestamp(cstTimestampFormat, DATETIME_FORMAT);
+        if (deserializeDateAndTimeAsLong) {
+            return castTimestamp(timestamp, 0);
+        }
+
+        if (deserializeDateAndTimeAsString) {
+            return cstTimestampFormat;
         }
         return new java.sql.Timestamp(timestamp);
     }
@@ -317,10 +395,17 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
     protected Serializable deserializeDatetime(ByteArrayInputStream inputStream) throws IOException {
         int[] split = split(inputStream.readLong(8), 100, 6);
         Long timestamp = asUnixTime(split[5], split[4], split[3], split[2], split[1], split[0], 0);
+
+        String cstDateFormat = cstDateFormat(timestamp, DATETIME_FORMAT);
+        timestamp = cstTimestamp(cstDateFormat, DATETIME_FORMAT);
         if (deserializeDateAndTimeAsLong) {
             return castTimestamp(timestamp, 0);
         }
-        return timestamp != null ? new java.util.Date(timestamp) : null;
+
+        if (deserializeDateAndTimeAsString) {
+            return cstDateFormat;
+        }
+        return timestamp != null ? new java.sql.Time(timestamp) : null;
     }
 
     protected Serializable deserializeDatetimeV2(int meta, ByteArrayInputStream inputStream) throws IOException {
@@ -350,10 +435,17 @@ public abstract class AbstractRowsEventDataDeserializer<T extends EventData> imp
             bitSlice(datetime, 34, 6, 40),
             fsp / 1000
         );
+
+        String cstDateFormat = cstDateFormat(timestamp, DATETIME_FORMAT);
+        timestamp = cstTimestamp(cstDateFormat, DATETIME_FORMAT);
         if (deserializeDateAndTimeAsLong) {
-            return castTimestamp(timestamp, fsp);
+            return castTimestamp(timestamp, 0);
         }
-        return timestamp != null ? new java.util.Date(timestamp) : null;
+
+        if (deserializeDateAndTimeAsString) {
+            return cstDateFormat;
+        }
+        return timestamp != null ? new java.sql.Time(timestamp) : null;
     }
 
     protected Serializable deserializeYear(ByteArrayInputStream inputStream) throws IOException {
